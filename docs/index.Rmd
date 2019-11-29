@@ -1,0 +1,86 @@
+---
+title: "Motor de busca textual com R, Shiny e PostgreSQL"
+#subtitle: "⚔<br/>with xaringan"
+author: "José de Jesus Filho"
+institute: "Consudata consultoria em organização e análise de dados jurídicos"
+date: "`r format(Sys.Date(), 'São Paulo, %d de %B de %Y')`"
+output:
+  xaringan::moon_reader:
+    lib_dir: libs
+    nature:
+      highlightStyle: github
+      highlightLines: true
+      countIncrementalSlides: false
+---
+
+```{r setup, include=FALSE}
+options(htmltools.dir.version = FALSE)
+```
+
+# Introdução
+
+A apresentação mostrará como estruturar uma base de dados de textos no PostgreSQL, tokenizá-los e montar um índice invertido a fim de realizar buscas textuais em grande volumes de documentos em poucos segundos. Os textos serão organizados a partir do R, enviados para o PostgreSQL, indexados e de lá chamados a partir de um aplicativo shiny.
+---
+
+# Prerrequisitos
+
+Supondo um ambiente de desenvolvimento, considero aqui a instalação do PostgreSQL, do RStudio e do Shiny numa única máquina. Em produção, eu crio uma rede privada de máquinas virtuais e distribuo as funcionalidades.
+
+```r
+- PostgreSQL instalado (irei mostrar como instalar no Ubuntu);
+- R, RStudio e Shiny instalados;
+- Pacotes DBI, RPostgres, pool, glue e DT instalados;
+- Tidyverse 
+
+```
+---
+# Instalar o PostgreSQL
+
+Para manter a versão mais recente do Postgres, seguir o seguinte procedimento: 
+
+## Adicionar a chave GPG
+```sh
+wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+```
+Em seguida, adicione o repositório com o comando abaixo:
+```sh
+sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt/ `lsb_release -cs`-pgdg main" >> /etc/apt/sources.list.d/pgdg.list'
+
+```
+Feito isso, o passo seguinte é instalar o PostgreSQL:
+
+```sh
+sudo apt update
+sudo apt install postgresql postgresql-contrib
+```
+---
+# Configuração do locale
+O PostgreSQL adota o locale da sua máquina, então é importante assegurar que o locale está configurado para `pt_BR.UTF-8`. Crie um arquivo e adicione o script para configuração do locale:
+```sh
+sudo touch set_locale.sh ## criação do arquivo
+```
+Script:
+```r
+#!/bin/bash
+# Set locales in /etc/default/locale file
+echo "Setting locale..."
+echo "# Locale settings
+export LANGUAGE=pt_BR.UTF-8
+export LANG=pt_BR.UTF-8
+export LC_ALL=pt_BR.UTF-8">>~/.bash_profile
+locale-gen pt_BR.UTF-8
+sudo dpkg-reconfigure locales
+source ~/.bash_profile
+```
+```sh
+sudo chmod +x set_locale.sh
+sudo ./set_locale.sh
+```
+
+---
+
+
+
+
+
+
