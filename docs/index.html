@@ -14,7 +14,7 @@ class: center, middle, inverse, title-slide
 # Motor de busca textual com R, Shiny e PostgreSQL
 ### José de Jesus Filho
 ### Consudata consultoria em organização e análise de dados jurídicos
-### São Paulo, 30 de Novembro de 2019
+### São Paulo, 30 de November de 2019
 
 ---
 
@@ -33,7 +33,7 @@ Supondo um ambiente de desenvolvimento, considero aqui a instalação do Postgre
 ```r
 - PostgreSQL instalado (irei mostrar como instalar no Ubuntu);
 - R, RStudio e Shiny instalados;
-- Pacotes DBI, RPostgres, dbx, pool, glue e DT instalados;
+- Pacotes DBI, RPostgres, dbx, pool, glue,abjutils e D instalados;
 - Tidyverse 
 
 ```
@@ -127,6 +127,7 @@ sudo -u postgres psql
 
 ## TSVECTOR, TSQUERY e @@
 As funções tsvector, tsquery e o operador @@ (match) fazem a mágica da busca textual. 
+
 ```sql
 SELECT to_tsvector('portuguese','São Paulo tem o melhor SatuRday do mundo') 
 @@ to_tsquery('saturday');
@@ -135,6 +136,7 @@ SELECT to_tsvector('portuguese','São Paulo tem o melhor SatuRday do mundo')
  t
 (1 row)
 ```
+---
 ```sql
 SELECT to_tsvector('portuguese','São Paulo tem o melhor SatuRday do mundo') 
 @@ to_tsquery('saturday &amp; paulo');
@@ -143,8 +145,6 @@ SELECT to_tsvector('portuguese','São Paulo tem o melhor SatuRday do mundo')
  t
 (1 row)
 ```
----
-
 ```sql
 SELECT to_tsvector('portuguese','São Paulo tem o melhor SatuRday do mundo') 
 @@ to_tsquery('saturday &amp; pedro');
@@ -295,7 +295,7 @@ CREATE TRIGGER tsvectorupdate BEFORE INSERT OR UPDATE
 
 ```
 ---
-## Realizando buscas
+## Realizando buscas:
 Por fim, montamos a função para realizar as buscas
 ```r
 psql_query &lt;-
@@ -303,6 +303,8 @@ psql_query &lt;-
             tbl,
             query = "")
   {
+    
+   query&lt;- tolower(abjutils::rm_accent(query))  
     target &lt;- "document_tokens"
     q &lt;-
       glue::glue_sql(
@@ -312,6 +314,12 @@ psql_query &lt;-
     DBI::dbGetQuery(con, q)
   }
 ```
+---
+## Inclusão no aplicativo Shiny
+
+O [https://github.com/jjesusfilho/FullTextSearch] contém template de aplicativo para realizar as buscas.
+
+Incluí uma função `psql_g1_dt.R` para criar um datatable htmlwidget com ajustes na aparência.
     </textarea>
 <style data-target="print-only">@media screen {.remark-slide-container{display:block;}.remark-slide-scaler{box-shadow:none;}}</style>
 <script src="https://remarkjs.com/downloads/remark-latest.min.js"></script>
