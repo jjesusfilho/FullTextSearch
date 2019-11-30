@@ -29,11 +29,21 @@ Supondo um ambiente de desenvolvimento, considero aqui a instalação do Postgre
 ```r
 - PostgreSQL instalado (irei mostrar como instalar no Ubuntu);
 - R, RStudio e Shiny instalados;
-- Pacotes DBI, RPostgres, pool, glue e DT instalados;
+- Pacotes DBI, RPostgres, dbx, pool, glue e DT instalados;
 - Tidyverse 
 
 ```
 ---
+
+# Porque usar o PostgreSQL
+
+- Fácil de instalar;
+- Bem documentado;
+- Ampla comunidade;
+- Software livre;
+- Funciona como motor de busca textual, dispensando o uso do
+Solr ou do Elasticsearch;
+
 # Instalar o PostgreSQL
 
 Para manter a versão mais recente do Postgres, seguir o seguinte procedimento: 
@@ -79,7 +89,231 @@ sudo ./set_locale.sh
 
 ---
 
+## Busca textual
 
+A busca textual  confere a capacidade de identificar documentos em linguagem natural que atendam a uma consulta e, opcionalmente, classificá-los por relevância para a busca. O tipo mais comum de pesquisa é encontrar todos os documentos que contenham os termos da consulta e retorná-los em ordem de semelhança com a consulta. As noções de consulta e semelhança são muito flexíveis e dependem da aplicação específica. 
+
+Os operadores de pesquisa textual existem nos bancos de dados há anos. O PostgreSQL possui operadores ~, ~ *, LIKE e ILIKE para tipos de dados textuais, mas eles não possuem muitas propriedades essenciais exigidas pelos modernos sistemas de informação:
+
+- Não há suporte linguístico, mesmo para o inglês. Expressões regulares não são suficientes porque não conseguem lidar facilmente com palavras derivadas, por exemplo, satisfazer e satisfeito. 
+
+- Eles não fornecem ordem (classificação) dos resultados da pesquisa, o que os torna ineficazes quando milhares de documentos correspondentes são encontrados.
+
+- Eles tendem a ser lentos porque não há suporte ao índice; portanto, eles devem processar todos os documentos para cada pesquisa.
+
+## Busca textual
+
+A indexação de texto completo permite que os documentos sejam pré-processados e um índice salvo para posterior busca rápida. O pré-processamento inclui:
+
+- Tokenização dos documentos;
+
+- Conversão dos tokens em lexemas;
+
+- Salvar documentos pré-processados e otimizados para pesquisa;
+
+---
+
+## Trabalhando com o PostgreSQL
+
+Para fins de completudo, estou admitindo que você não tem familiaridade com o PostgreSQL. Isso não significa que darei explicação de cada passo, apenas que não os deixarei implícitos. Então vamos iniciar o prompt do psql:
+
+```sql
+sudo -u postgres psql
+```
+
+## TSVECTOR, TSQUERY e @@
+As funções tsvector, tsquery e o operador @@ (match) fazem a mágica da busca textual. 
+```sql
+SELECT to_tsvector('portuguese','São Paulo tem o melhor SatuRday do mundo') 
+@@ to_tsquery('saturday');
+?column?
+----------
+ t
+(1 row)
+```
+```sql
+SELECT to_tsvector('portuguese','São Paulo tem o melhor SatuRday do mundo') 
+@@ to_tsquery('saturday & paulo');
+?column?
+----------
+ t
+(1 row)
+```
+---
+
+```sql
+SELECT to_tsvector('portuguese','São Paulo tem o melhor SatuRday do mundo') 
+@@ to_tsquery('saturday & pedro');
+?column?
+----------
+ f
+(1 row)
+```
+```sql
+SELECT to_tsvector('portuguese','São Paulo tem o melhor SatuRday do mundo') 
+@@ to_tsquery('saturday | pedro');
+?column?
+----------
+ t
+(1 row)
+```
+---
+
+## Trabalhando com tabelas
+No [repositório](https://github.com/jjesusfilho/FullTextSearch) consta uma base de 48 mil notícias do G1, a qual utilizaremos para fins de demonstração.
+
+Inicialmente, vamos criar um usuário (role) e uma base de dados para receber essas notícias:
+
+```sql
+CREATE ROLE saturday WITH PASSWORD 'RshinesWithPostgres' VALID UNTIL '2019-12-01'; 
+CREATE DATABASE noticias OWNER = saturday;
+```
+Agora nos conectamos à base, adicionamos duas extensões importantes. Uma para lidar com palavras acentuadas, outra para permitir busca fuzzy.
+
+```sql
+\c noticias
+CREATE EXTENSION unaccent;
+CREATE EXTENSION pg_trgm;
+```
+---
+## Configurações necessárias
+
+Vamos agora criar um dicionário com as palavras não acentuadas:
+
+```sql
+CREATE TEXT SEARCH CONFIGURATION pt (COPY = portuguese);
+ALTER TEXT SEARCH CONFIGURATION pt
+ALTER MAPPING
+FOR hword, hword_part, word with unaccent, portuguese_stem;
+```
+```sql
+CREATE TEXT SEARCH DICTIONARY public.simple_dict (
+TEMPLATE = pg_catalog.simple,
+stopwords = portuguese
+);
+```
+Agora vincular o dicinário à configuração:
+
+```sql
+ALTER TEXT SEARCH CONFIGURATION pt
+   FOR hword, hword_part, word with unaccent, portuguese_stem
+    WITH public.simple_dict;
+
+```
+Não se assuste, para facilitar sua vida, eu criei uma função `psql_pt_config.R` do R que realiza todos esses passos.
+
+---
+
+## Indexação dos documentos
+
+De agora em diante, passaremos a executar os queries e statemants a partir do próprio R, colocando-os dentro de funções.
+
+A primeira coisa a fazer é conectar-se à base e adicionar a tabela. Veja que eu apenas crio a tabela, mas não insiro os documentos. Quando você tem muitos documentos, isso pode travar.
+
+```r
+conn <- DBI::dbConnect(RPostgres::Postgres(),
+dbname = "noticias",
+host = "localhost",
+user="saturday",
+password = "RshinesWithPostgres")
+
+DBI::dbCreateTable(conn,"g1",g1)
+```
+
+---
+## Inserindo os documentos
+
+Para inserir os documentos, eu prefiro usar o pacote `dbx` porque ele permite a inserção em batches. Minha experiência é que inserir centenas de milhares de documentos pode sobrecarregar sua máquina. Coloquei mil, mas 50 mil tem suportado bem.
+
+```r
+dbx::dbxInsert(con = conn, table = "g1", records = g1, batch_size = 1000)
+```
+## Indexando os documentos
+
+Hora de indexar os documentos. Há dois indexadores, o GIN e o GIST, usaremos o GIN pq é mais rápido, porém mais intenso. A função a seguir cria o index estabelecendo pesos diferentes para duas colunas.
+
+---
+## Indexando os documentos
+```r
+psql_tokenize <- function(con, tbl, config = "pt") {
+  source <- list(a = c("intro", "A"), j = c("corpo", "B"))
+  target <- "document_tokens"
+  idx <- paste0(tbl,"_idx")
+  query <- glue::glue_sql("ALTER TABLE {`tbl`} ADD COLUMN {`target`} TSVECTOR", .con = con)
+
+  res <- DBI::dbSendQuery(con, query)
+  DBI::dbClearResult(res)
+
+  query <- glue::glue_sql("UPDATE {`tbl`} SET
+                         {`target`} = setweight(to_tsvector({config},coalesce({`source$a[1]`},'')), {source$a[2]}) ||
+                         setweight(to_tsvector({config},coalesce({`source$j[1]`}, '')), {source$j[2]})", .con = con)
+
+  res <- DBI::dbSendQuery(con, query)
+  DBI::dbClearResult(res)
+
+  query <- glue::glue_sql("CREATE INDEX {`idx`} ON {`tbl`} USING GIN ({`target`})", .con = con)
+
+  res <- DBI::dbSendQuery(con, query)
+  DBI::dbClearResult(res)
+}
+```
+---
+## Criando gatilho (trigger) para indexar novos documentos
+A função a seguir cria um gatilho para indexar novos documentos inseridos:
+---
+## Criando gatilho (trigger)
+```r
+psql_trigger <- function(con,tbl,config="pt"){
+
+  a<-"A"
+  b<-"B"
+  intro<-"new.intro"
+  corpo="new.corpo"
+  f_name<-paste0(tbl,"_trigger()")
+
+  q<-glue::glue_sql("CREATE FUNCTION {DBI::SQL(f_name)} RETURNS trigger AS $$
+begin
+  new.document_tokens :=
+     setweight(to_tsvector({config},coalesce({intro},'')), {a}) ||
+     setweight(to_tsvector({config},coalesce({corpo},'')), {b});
+  return new;
+end
+$$ LANGUAGE plpgsql;",.con=con)
+
+  RPostgres::dbExecute(con,q)
+
+  q <- glue::glue_sql("
+CREATE TRIGGER tsvectorupdate BEFORE INSERT OR UPDATE
+    ON {`tbl`} FOR EACH ROW EXECUTE FUNCTION {DBI::SQL(f_name)}",.con=con)
+
+  RPostgres::dbExecute(con,q)
+}
+
+```
+---
+## Realizando buscas:
+Por fim, montamos a função para realizar as buscas
+```r
+psql_query <-
+  function (con,
+            tbl,
+            query = "")
+  {
+    target <- "document_tokens"
+    q <-
+      glue::glue_sql(
+        "SELECT * FROM {`tbl`}  WHERE {`tbl`}.{`target`} @@ websearch_to_tsquery('pt',{query})",
+        .con = con
+      )
+    DBI::dbGetQuery(con, q)
+  }
+```
+
+## Inclusão no aplicativo Shiny
+
+O [https://github.com/jjesusfilho/FullTextSearch] contém template de aplicativo para realizar as buscas.
+
+Eu incluí uma função para criar um datatable htmlwidget com ajustes na aparência.
 
 
 
