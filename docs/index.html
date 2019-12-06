@@ -14,7 +14,7 @@ class: center, middle, inverse, title-slide
 # Motor de busca textual com R, Shiny e PostgreSQL
 ### José de Jesus Filho
 ### Consudata consultoria em organização e análise de dados jurídicos
-### São Paulo, 30 de November de 2019
+### São Paulo, 06 de Dezembro de 2019
 
 ---
 
@@ -125,8 +125,8 @@ Para fins de completudo, estou admitindo que você não tem familiaridade com o 
 sudo -u postgres psql
 ```
 
-## TSVECTOR, TSQUERY e @@
-As funções tsvector, tsquery e o operador @@ (match) fazem a mágica da busca textual. 
+## TO_TSVECTOR, TO_TSQUERY e @@
+As funções to_tsvector, to_tsquery e o operador @@ (match) fazem a mágica da busca textual. 
 
 ```sql
 SELECT to_tsvector('portuguese','São Paulo tem o melhor SatuRday do mundo') 
@@ -182,26 +182,53 @@ CREATE EXTENSION pg_trgm;
 ---
 ## Configurações necessárias
 
+Primeiramente, iremos instalar o pacote `myspell-pt-br`:
+
+```sh
+sudo apt install myspell-pt-br
+```
+Feito isso, localize os os sequintes arquivos: `pt_br.aff` e `pt_br.dic`, que provavelmente estão localizados no seguinte diretório:
+
+```sh
+/usr/share/hunspell/
+```
+A partir deles devemos gerar os arquivos .affix e .dict respectivamente e transferi-los para o diretório `/usr/share/postgresql/versao_do_postgresql/tsearch_data/`. Este tutorial foi produzido na versão 12:
+
+```sh
+iconv -f latin1 -t UTF-8 \
+/usr/share/hunspell/pt_BR.aff &gt; /usr/share/postgresql/12/tsearch_data/pt_br.affix
+```
+```sh
+iconv -f latin1 -t UTF-8 \
+/usr/share/hunspell/pt_BR.dic &gt; /usr/share/postgresql/12/tsearch_data/pt_br.dict
+```
+---
+## Configurações necessárias
+
 Vamos agora criar um dicionário com as palavras não acentuadas:
 
 ```sql
-CREATE TEXT SEARCH CONFIGURATION pt (COPY = portuguese);
+CREATE TEXT SEARCH CONFIGURATION pt (COPY = pg_catalog.portuguese);
 ALTER TEXT SEARCH CONFIGURATION pt
 ALTER MAPPING
 FOR hword, hword_part, word with unaccent, portuguese_stem;
 ```
 ```sql
-CREATE TEXT SEARCH DICTIONARY public.simple_dict (
-TEMPLATE = pg_catalog.simple,
+CREATE TEXT SEARCH DICTIONARY public.portuguese_dict (
+TEMPLATE = ispell,
+DictFile = pt_br,
+AffFile = pt_br,
 stopwords = portuguese
 );
 ```
+---
+## Configurações necessárias
 Agora vincular o dicinário à configuração:
 
 ```sql
 ALTER TEXT SEARCH CONFIGURATION pt
-   FOR hword, hword_part, word with unaccent, portuguese_stem
-    WITH public.simple_dict;
+   ALTER MAPPING FOR hword, hword_part, word
+    WITH public.portuguese_dict, simple;
 
 ```
 Não se assuste, para facilitar sua vida, eu criei uma função `psql_pt_config.R` do R que realiza todos esses passos.
@@ -304,7 +331,6 @@ psql_query &lt;-
             query = "")
   {
     
-   query&lt;- tolower(abjutils::rm_accent(query))  
     target &lt;- "document_tokens"
     q &lt;-
       glue::glue_sql(

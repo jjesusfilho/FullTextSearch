@@ -12,7 +12,7 @@ psql_pt_config <- function(con = NULL){
 
   DBI::dbExecute(con,q2)
 
-  q3 <- glue::glue_sql("CREATE OR REPLACE TEXT SEARCH CONFIGURATION pt (COPY = portuguese)",.con=con)
+  q3 <- glue::glue_sql("CREATE TEXT SEARCH CONFIGURATION pt (COPY = pg_catalog.portuguese)",.con=con)
 
   DBI::dbExecute(con,q3)
 
@@ -21,14 +21,17 @@ ALTER MAPPING FOR hword, hword_part, word with unaccent, portuguese_stem",.con =
 
   DBI::dbExecute(con,q4)
 
-  q5 <- glue::glue_sql("CREATE OR REPlACE TEXT SEARCH DICTIONARY public.simple_dic (
-TEMPLATE = pg_catalog.simple, stopwords = portuguese)",.con = con)
+  q5 <- glue::glue_sql("CREATE TEXT SEARCH DICTIONARY public.portuguese_dic (
+TEMPLATE = ispell,
+DictFile = pt_br,
+AffFile = pt_br,
+stopwords = portuguese)",.con = con)
 
   DBI::dbExecute(con,q5)
 
   q6 <- glue::glue_sql("ALTER TEXT SEARCH CONFIGURATION pt
      ALTER MAPPING FOR hword, hword_part, word
-      WITH public.simple_dic",.con = con)
+      WITH public.portuguese_dic",.con = con)
 
   DBI::dbExecute(con,q6)
 
